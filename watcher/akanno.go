@@ -7,8 +7,8 @@ import (
 	"os/exec"
 	"strings"
 
+	"github.com/D-0000000000/autoloader/common"
 	"github.com/gocolly/colly/v2"
-	"github.com/hguandl/dr-feeder/v2/common"
 )
 
 const iOSClientUA = "arknights/385" +

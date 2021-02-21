@@ -6,22 +6,10 @@ import (
 	"math/rand"
 	"time"
 
-	"github.com/hguandl/dr-feeder/v2/common"
-	// "github.com/hguandl/dr-feeder/v2/notifier"
-	"github.com/hguandl/dr-feeder/v2/watcher"
+	"github.com/D-0000000000/autoloader/common"
+	"github.com/D-0000000000/autoloader/watcher"
 )
 
-// func consume(ch chan common.NotifyPayload, notifiers []notifier.Notifier) {
-// 	for {
-// 		pl := <-ch
-// 		log.Printf("Received \"%s\":\n==========\n%s\n==========",
-// 			pl.Title, pl.Body)
-
-// 		for _, ntf := range notifiers {
-// 			go ntf.Push(pl)
-// 		}
-// 	}
-// }
 
 func watch(watcher watcher.Watcher, ch chan common.NotifyPayload) {
 	for {
