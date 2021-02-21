@@ -116,6 +116,7 @@ func (watcher *akAnnounceWatcher) Produce(ch chan common.NotifyPayload) {
 		parseMessage := watcher.parseContent()
 		msg := parseMessage.Body + "\n" + parseMessage.Title + "\n" + parseMessage.URL + "\n"
 		cmd := exec.Command("./qqmessagesender", msg)
+		// Specific message sender here
 		buf, err := cmd.Output()
 		if err != nil {
 			fmt.Println(err.Error())
