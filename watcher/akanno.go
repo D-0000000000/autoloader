@@ -7,8 +7,8 @@ import (
 	"os/exec"
 	"strings"
 
+	"github.com/D-0000000000/autoloader/common"
 	"github.com/gocolly/colly/v2"
-	"github.com/hguandl/dr-feeder/v2/common"
 )
 
 const iOSClientUA = "arknights/385" +
@@ -32,8 +32,9 @@ type announceMeta struct {
 
 type akAnnounceWatcher struct {
 	name       string
-	latestID   string
+	focusID    string
 	latestAnno announce
+	existedID  []string
 }
 
 func NewAkAnnounceWatcher() (Watcher, error) {
@@ -44,7 +45,7 @@ func NewAkAnnounceWatcher() (Watcher, error) {
 }
 
 func (watcher akAnnounceWatcher) fetchAPI() (announceMeta, error) {
-	const apiURL = "https://ak-fs.hypergryph.com/announce/IOS/announcement.meta.json?sign="
+	const apiURL = "https://ak-fs.hypergryph.com/announce/IOS/announcement.meta.json?sign=1145141919"
 	var err error = nil
 	var data announceMeta
 	c := colly.NewCollector(
@@ -71,9 +72,19 @@ func (watcher *akAnnounceWatcher) setup() error {
 		return err
 	}
 
-	watcher.latestID = data.FocusAnnounceID
+	watcher.focusID = data.FocusAnnounceID
+	watcher.existedID = flushIDList(data.AnnounceList)
 
 	return nil
+}
+
+func flushIDList(announceList []announce) []string {
+	ret := make([]string, len(announceList))
+	for i, anno := range announceList {
+		ret[i] = anno.AnnounceID
+	}
+
+	return ret
 }
 
 func (watcher *akAnnounceWatcher) update() bool {
@@ -83,16 +94,39 @@ func (watcher *akAnnounceWatcher) update() bool {
 		return false
 	}
 
-	if data.FocusAnnounceID != watcher.latestID {
-		watcher.latestID = data.FocusAnnounceID
+	if watcher.focusID != data.FocusAnnounceID {
+		watcher.focusID = data.FocusAnnounceID
+		existed := false
 		for _, anno := range data.AnnounceList {
 			if anno.AnnounceID == data.FocusAnnounceID {
-				watcher.latestAnno = anno
+				existed = true
 				break
 			}
 		}
-		if strings.Contains(watcher.latestAnno.Title, "制作组通讯") {
+		if existed == false {
+			watcher.latestAnno = announce{
+				Title:  "出现公告弹窗，可能会有新饼",
+				WebURL: "about:blank",
+			}
 			return true
+		}
+	}
+
+	for _, anno := range data.AnnounceList {
+		newID := anno.AnnounceID
+		existed := false
+		for _, oldID := range watcher.existedID {
+			if newID == oldID {
+				existed = true
+				break
+			}
+		}
+		if existed == false {
+			watcher.existedID = flushIDList(data.AnnounceList)
+			if strings.Contains(anno.Title, "制作组通讯") {
+				watcher.latestAnno = anno
+				return true
+			}
 		}
 	}
 
@@ -108,13 +142,12 @@ func (watcher akAnnounceWatcher) parseContent() common.NotifyPayload {
 		URL:   anno.WebURL,
 	}
 }
-
 func (watcher *akAnnounceWatcher) Produce(ch chan common.NotifyPayload) {
 	if watcher.update() {
 		log.Printf("New post from \"%s\"...\n", watcher.name)
-		// log.Printf("New post from \"%s\"...\n", watcher.name)
 		parseMessage := watcher.parseContent()
-		msg := parseMessage.Body + "\n" + parseMessage.Title + "\n" + parseMessage.URL + "\n"
+		msg := "\"" + parseMessage.Body + "\n" + parseMessage.Title + "\n" + parseMessage.URL + "\n" + "\""
+		log.Printf(msg)
 		cmd := exec.Command("./qqmessagesender", msg)
 		// Specific message sender here
 		buf, err := cmd.Output()
@@ -122,7 +155,6 @@ func (watcher *akAnnounceWatcher) Produce(ch chan common.NotifyPayload) {
 			fmt.Println(err.Error())
 		}
 		fmt.Println(string(buf))
-		// ch <- watcher.parseContent()
 	} else {
 		log.Printf("Waiting for post \"%s\"...\n", watcher.name)
 	}

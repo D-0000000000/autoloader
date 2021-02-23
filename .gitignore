@@ -1,0 +1,4 @@
+# for Goland IDE
+.idea/
+# for generated executable
+autoloader.exe

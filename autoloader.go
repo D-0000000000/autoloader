@@ -6,22 +6,9 @@ import (
 	"math/rand"
 	"time"
 
-	"github.com/hguandl/dr-feeder/v2/common"
-	// "github.com/hguandl/dr-feeder/v2/notifier"
-	"github.com/hguandl/dr-feeder/v2/watcher"
+	"github.com/D-0000000000/autoloader/common"
+	"github.com/D-0000000000/autoloader/watcher"
 )
-
-// func consume(ch chan common.NotifyPayload, notifiers []notifier.Notifier) {
-// 	for {
-// 		pl := <-ch
-// 		log.Printf("Received \"%s\":\n==========\n%s\n==========",
-// 			pl.Title, pl.Body)
-
-// 		for _, ntf := range notifiers {
-// 			go ntf.Push(pl)
-// 		}
-// 	}
-// }
 
 func watch(watcher watcher.Watcher, ch chan common.NotifyPayload) {
 	for {
@@ -32,13 +19,6 @@ func watch(watcher watcher.Watcher, ch chan common.NotifyPayload) {
 }
 
 func main() {
-	// pathPtr := flag.String("c", "config.yaml", "Configuration file")
-	// flag.Parse()
-
-	// notifiers, err := ParseConfig(*pathPtr)
-	// if err != nil {
-	// 	log.Fatal(err)
-	// }
 
 	gfweibo, err := watcher.NewWeiboWatcher(5611537367)
 	if err != nil {
@@ -60,8 +40,6 @@ func main() {
 	go watch(gfweibo, ch)
 	go watch(arkweibo, ch)
 	go watch(anAnno, ch)
-
-	// go consume(ch, notifiers)
 
 	select {}
 }
