@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"os"
 	"os/exec"
 	"strings"
 
@@ -142,13 +143,31 @@ func (watcher *akAnnounceWatcher) Produce(ch chan common.NotifyPayload) {
 	if watcher.update() {
 		log.Printf("New post from \"%s\"...\n", watcher.name)
 		msg := watcher.parseContent()
-		jmsg, err := json.Marshal(msg)
+		msgfile, err := os.Create("msgTitle.txt")
 		if err != nil {
-			fmt.Println(err)
-			return
+			panic(err)
 		}
-		// fmt.Println(string(jmsg))
-		cmd := exec.Command("./qqmessagesender", string(jmsg))
+		msgfile.WriteString(msg.Title + "\n")
+		msgfile.Close()
+		msgfile, err = os.Create("msgBody.txt")
+		if err != nil {
+			panic(err)
+		}
+		msgfile.WriteString(msg.Body + "\n")
+		msgfile.Close()
+		msgfile, err = os.Create("msgURL.txt")
+		if err != nil {
+			panic(err)
+		}
+		msgfile.WriteString(msg.URL + "\n")
+		msgfile.Close()
+		msgfile, err = os.Create("msgPicURL.txt")
+		if err != nil {
+			panic(err)
+		}
+		msgfile.WriteString(msg.PicURL + "\n")
+		msgfile.Close()
+		cmd := exec.Command("./qqmessagesender")
 		buf, err := cmd.Output()
 		if err != nil {
 			fmt.Println(err.Error())

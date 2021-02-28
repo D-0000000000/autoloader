@@ -33,7 +33,7 @@ Once autoloader get new message, message will send to QQ by message sender
 
 Actually I don't know anything about golang. I just modified a project from [hguandl](https://github.com/hguandl/) I don't know if there is any problem. But it did work. If there is any problems on code I'm out.
 
-If you want to change watch list, please refer to `autoloader.go`. I'm sure you can figure it out easily.
+Watch list please refer to `config.yaml`.
 
 ## Credit
 
