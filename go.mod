@@ -1,4 +1,4 @@
-module github.com/hguandl/dr-feeder/v2
+module github.com/D-0000000000/autoloader/v2
 
 go 1.15
 
