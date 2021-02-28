@@ -7,7 +7,7 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/D-0000000000/autoloader/common"
+	"github.com/D-0000000000/autoloader/v2/common"
 	"github.com/gocolly/colly/v2"
 )
 
@@ -15,39 +15,34 @@ const iOSClientUA = "arknights/385" +
 	" CFNetwork/1220.1" +
 	" Darwin/20.3.0'"
 
-type announce struct {
-	AnnounceID string `json:"announceId"`
-	Title      string `json:"title"`
-	IsWebURL   bool   `json:"isWebUrl"`
-	WebURL     string `json:"webUrl"`
-	Day        int    `json:"day"`
-	Month      int    `json:"month"`
-	Group      string `json:"group"`
-}
-
-type announceMeta struct {
-	FocusAnnounceID string     `json:"focusAnnounceId"`
-	AnnounceList    []announce `json:"announceList"`
-}
-
 type akAnnounceWatcher struct {
 	name       string
 	focusID    string
 	latestAnno announce
 	existedID  []string
+	debugURL   string
 }
 
-func NewAkAnnounceWatcher() (Watcher, error) {
+// NewAkAnnounceWatcher creates a Watcher of Arknights game annoucements.
+func NewAkAnnounceWatcher(debugURL string) (Watcher, error) {
 	watcher := new(akAnnounceWatcher)
 	watcher.name = "明日方舟客户端公告"
+	watcher.debugURL = debugURL
 	err := watcher.setup()
 	return watcher, err
 }
 
 func (watcher akAnnounceWatcher) fetchAPI() (announceMeta, error) {
-	const apiURL = "https://ak-fs.hypergryph.com/announce/IOS/announcement.meta.json?sign=1145141919"
+	var apiURL string
 	var err error = nil
 	var data announceMeta
+
+	if watcher.debugURL != "" {
+		apiURL = watcher.debugURL
+	} else {
+		apiURL = "https://ak-fs.hypergryph.com/announce/IOS/announcement.meta.json?sign=1145141919"
+	}
+
 	c := colly.NewCollector(
 		colly.UserAgent(iOSClientUA),
 	)
@@ -106,7 +101,7 @@ func (watcher *akAnnounceWatcher) update() bool {
 		if existed == false {
 			watcher.latestAnno = announce{
 				Title:  "出现公告弹窗，可能会有新饼",
-				WebURL: "about:blank",
+				WebURL: "https://ak.hypergryph.com/news.html",
 			}
 			return true
 		}
@@ -142,19 +137,24 @@ func (watcher akAnnounceWatcher) parseContent() common.NotifyPayload {
 		URL:   anno.WebURL,
 	}
 }
+
 func (watcher *akAnnounceWatcher) Produce(ch chan common.NotifyPayload) {
 	if watcher.update() {
 		log.Printf("New post from \"%s\"...\n", watcher.name)
-		parseMessage := watcher.parseContent()
-		msg := "\"" + parseMessage.Body + "\n" + parseMessage.Title + "\n" + parseMessage.URL + "\n" + "\""
-		log.Printf(msg)
-		cmd := exec.Command("./qqmessagesender", msg)
-		// Specific message sender here
+		msg := watcher.parseContent()
+		jmsg, err := json.Marshal(msg)
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+		// fmt.Println(string(jmsg))
+		cmd := exec.Command("./qqmessagesender", string(jmsg))
 		buf, err := cmd.Output()
 		if err != nil {
 			fmt.Println(err.Error())
 		}
 		fmt.Println(string(buf))
+		// ch <- watcher.parseContent()
 	} else {
 		log.Printf("Waiting for post \"%s\"...\n", watcher.name)
 	}

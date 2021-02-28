@@ -4,47 +4,20 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"os"
 	"os/exec"
 	"strings"
 	"time"
 
-	"github.com/D-0000000000/autoloader/common"
+	"github.com/D-0000000000/autoloader/v2/common"
 	"github.com/antchfx/htmlquery"
 	"github.com/gocolly/colly/v2"
+	"github.com/mitchellh/mapstructure"
 )
 
 const safariUA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_6)" +
 	" AppleWebKit/605.1.15 (KHTML, like Gecko)" +
 	" Version/14.0.3 Safari/605.1.15"
-
-type indexData struct {
-	Data struct {
-		UserInfo struct {
-			ScreenName string `json:"screen_name"`
-		} `json:"userInfo"`
-		TabsInfo struct {
-			Tabs []struct {
-				TabType     string `json:"tab_type"`
-				Containerid string `json:"containerid"`
-			} `json:"tabs"`
-		} `json:"tabsInfo"`
-	} `json:"data"`
-}
-
-type mblog struct {
-	CreatedAt string `json:"created_at"`
-	ID        string `json:"id"`
-	Text      string `json:"text"`
-}
-
-type cardData struct {
-	Data struct {
-		Cards []struct {
-			CardType int   `json:"card_type"`
-			Mblog    mblog `json:"mblog,omitempty"`
-		} `json:"cards"`
-	} `json:"data"`
-}
 
 type weiboWatcher struct {
 	uid         uint64
@@ -52,12 +25,15 @@ type weiboWatcher struct {
 	containerID string
 	name        string
 	latestMblog mblog
+	debugURL    string
 }
 
-func NewWeiboWatcher(uid int64) (Watcher, error) {
+// NewWeiboWatcher creates a Watcher of Arknights official Weibo.
+func NewWeiboWatcher(uid int64, debugURL string) (Watcher, error) {
 	watcher := new(weiboWatcher)
 	watcher.uid = uint64(uid)
 	watcher.updateTime = time.Now().UTC()
+	watcher.debugURL = debugURL
 	err := watcher.setup()
 	return watcher, err
 }
@@ -70,6 +46,10 @@ func (watcher weiboWatcher) homeAPI() string {
 }
 
 func (watcher weiboWatcher) weiboAPI() string {
+	if watcher.debugURL != "" {
+		return watcher.debugURL
+	}
+
 	return fmt.Sprintf("%s%s%d%s%s",
 		"https://m.weibo.cn/api/container/getIndex?type=uid",
 		"&value=", watcher.uid,
@@ -165,27 +145,63 @@ func (watcher weiboWatcher) parseContent() common.NotifyPayload {
 		texts += strings.Trim(node.Data, " \n")
 	}
 
+	picURL := weibo.PicURL
+	pageURL := fmt.Sprintf("%s/%s", "https://m.weibo.cn/status", weibo.ID)
+
+	var pageInfo pageInfo
+	mapstructure.Decode(weibo.PageInfo, &pageInfo)
+
+	if pageInfo.Type == "article" || pageInfo.Type == "video" {
+		picURL = pageInfo.PagePic.URL
+	}
+
+	if pageInfo.Type == "article" {
+		pageURL = pageInfo.PageURL
+	}
+
 	return common.NotifyPayload{
-		Title: watcher.name,
-		Body:  texts,
-		URL:   fmt.Sprintf("%s/%s", "https://m.weibo.cn/status", weibo.ID),
+		Title:  watcher.name,
+		Body:   texts,
+		URL:    pageURL,
+		PicURL: picURL,
 	}
 }
 
 func (watcher *weiboWatcher) Produce(ch chan common.NotifyPayload) {
 	if watcher.update() {
 		log.Printf("New post from \"%s\"...\n", watcher.name)
-		parseMessage := watcher.parseContent()
-		msg := parseMessage.Body + "\n" + parseMessage.Title + "\n" + parseMessage.URL + "\n"
-		cmd := exec.Command("./qqmessagesender", msg)
-		// Specific message sender here
+		msg := watcher.parseContent()
+		msgfile, err := os.Create("msgTitle.txt")
+		if err != nil {
+			panic(err)
+		}
+		msgfile.WriteString(msg.Title + "\n")
+		msgfile.Close()
+		msgfile, err = os.Create("msgBody.txt")
+		if err != nil {
+			panic(err)
+		}
+		msgfile.WriteString(msg.Body + "\n")
+		msgfile.Close()
+		msgfile, err = os.Create("msgURL.txt")
+		if err != nil {
+			panic(err)
+		}
+		msgfile.WriteString(msg.URL + "\n")
+		msgfile.Close()
+		msgfile, err = os.Create("msgPicURL.txt")
+		if err != nil {
+			panic(err)
+		}
+		msgfile.WriteString(msg.PicURL + "\n")
+		msgfile.Close()
+		cmd := exec.Command("./qqmessagesender")
 		buf, err := cmd.Output()
 		if err != nil {
 			fmt.Println(err.Error())
 		}
 		fmt.Println(string(buf))
 		// ch <- watcher.parseContent()
-		// ch <- parseMessage
 	} else {
 		log.Printf("Waiting for post \"%s\"...\n", watcher.name)
 	}
