@@ -4,8 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"os"
-	"os/exec"
 	"strings"
 	"time"
 
@@ -19,19 +17,25 @@ const safariUA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_6)" +
 	" AppleWebKit/605.1.15 (KHTML, like Gecko)" +
 	" Version/14.0.3 Safari/605.1.15"
 
+const iOSWeiboIntlUA = "WeiboOverseas/4.2.6 (iPhone; iOS 14.4.2; Scale/3.00)"
+
 type weiboWatcher struct {
 	uid         uint64
 	updateTime  time.Time
 	containerID string
 	name        string
 	latestMblog mblog
+	sub         string
+	subp        string
 	debugURL    string
 }
 
 // NewWeiboWatcher creates a Watcher of Arknights official Weibo.
-func NewWeiboWatcher(uid int64, debugURL string) (Watcher, error) {
+func NewWeiboWatcher(uid int64, sub string, subp string, debugURL string) (Watcher, error) {
 	watcher := new(weiboWatcher)
 	watcher.uid = uint64(uid)
+	watcher.sub = sub
+	watcher.subp = subp
 	watcher.updateTime = time.Now().UTC()
 	watcher.debugURL = debugURL
 	err := watcher.setup()
@@ -55,6 +59,47 @@ func (watcher weiboWatcher) weiboAPI() string {
 		"&value=", watcher.uid,
 		"&containerid=", watcher.containerID,
 	)
+}
+
+func (watcher weiboWatcher) weiboIntlShareAPI(weiboID string) string {
+	return fmt.Sprintf("https://weibointl.api.weibo.cn/portal.php"+
+		"?a=get_share_url"+
+		"&ct=weibo"+
+		"&lang=zh-Hans"+
+		"&uid=%d"+
+		"&weibo_id=%s",
+		watcher.uid,
+		weiboID,
+	)
+}
+
+func (watcher weiboWatcher) weiboIntlShareURL(weiboID string) (string, error) {
+	var err error = nil
+	var shareURL string
+	c := colly.NewCollector(
+		colly.UserAgent(iOSWeiboIntlUA),
+	)
+
+	c.OnError(func(_ *colly.Response, e error) {
+		err = e
+	})
+
+	c.OnResponse(func(r *colly.Response) {
+		var resp weiboIntlResp
+		err = json.Unmarshal(r.Body, &resp)
+		if err != nil {
+			return
+		}
+		if resp.Retcode != 0 {
+			err = fmt.Errorf("%s", resp.Info)
+			return
+		}
+		shareURL = resp.Data.URL
+	})
+
+	c.Visit(watcher.weiboIntlShareAPI(weiboID))
+	c.Wait()
+	return shareURL, err
 }
 
 func (watcher *weiboWatcher) setup() error {
@@ -98,6 +143,11 @@ func (watcher *weiboWatcher) update() bool {
 		err = e
 	})
 
+	c.OnRequest(func(r *colly.Request) {
+		r.Headers.Set("Cookie", fmt.Sprintf("%v=%v; %v=%v",
+			"SUB", watcher.sub, "SUBP", watcher.subp))
+	})
+
 	c.OnResponse(func(r *colly.Response) {
 		var data cardData
 		err = json.Unmarshal(r.Body, &data)
@@ -127,8 +177,12 @@ func (watcher *weiboWatcher) update() bool {
 	return ret
 }
 
-func (watcher weiboWatcher) parseContent() common.NotifyPayload {
+func (watcher weiboWatcher) parseContent() (common.NotifyPayload, bool) {
 	weibo := watcher.latestMblog
+
+	// if len(weibo.RetweetedStatus) > 0 {
+	// 	return common.NotifyPayload{}, false
+	// }
 
 	doc, _ := htmlquery.Parse(
 		strings.NewReader(
@@ -139,14 +193,22 @@ func (watcher weiboWatcher) parseContent() common.NotifyPayload {
 
 	texts := ""
 	for _, node := range nodes {
-		if node.Data == "#明日方舟#" {
-			continue
-		}
+		// if node.Data == "#明日方舟#" {
+		// 	continue
+		// }
 		texts += strings.Trim(node.Data, " \n")
 	}
 
+	// if strings.Contains(texts, "微博官方唯一抽奖工具") && strings.Contains(texts, "结果公正有效") {
+	// 	return common.NotifyPayload{}, false
+	// }
+
 	picURL := weibo.PicURL
-	pageURL := fmt.Sprintf("%s/%s", "https://m.weibo.cn/status", weibo.ID)
+	pageURL, err := watcher.weiboIntlShareURL(weibo.ID)
+	if err != nil {
+		log.Println(err)
+		pageURL = fmt.Sprintf("%s/%s", "https://m.weibo.cn/status", weibo.ID)
+	}
 
 	var pageInfo pageInfo
 	mapstructure.Decode(weibo.PageInfo, &pageInfo)
@@ -164,44 +226,18 @@ func (watcher weiboWatcher) parseContent() common.NotifyPayload {
 		Body:   texts,
 		URL:    pageURL,
 		PicURL: picURL,
-	}
+	}, true
 }
 
 func (watcher *weiboWatcher) Produce(ch chan common.NotifyPayload) {
 	if watcher.update() {
 		log.Printf("New post from \"%s\"...\n", watcher.name)
-		msg := watcher.parseContent()
-		msgfile, err := os.Create("msgTitle.txt")
-		if err != nil {
-			panic(err)
+		payload, valid := watcher.parseContent()
+		if valid {
+			ch <- payload
+		} else {
+			log.Println("Useless message, ignored.")
 		}
-		msgfile.WriteString(msg.Title + "\n")
-		msgfile.Close()
-		msgfile, err = os.Create("msgBody.txt")
-		if err != nil {
-			panic(err)
-		}
-		msgfile.WriteString(msg.Body + "\n")
-		msgfile.Close()
-		msgfile, err = os.Create("msgURL.txt")
-		if err != nil {
-			panic(err)
-		}
-		msgfile.WriteString(msg.URL + "\n")
-		msgfile.Close()
-		msgfile, err = os.Create("msgPicURL.txt")
-		if err != nil {
-			panic(err)
-		}
-		msgfile.WriteString(msg.PicURL + "\n")
-		msgfile.Close()
-		cmd := exec.Command("./qqmessagesender")
-		buf, err := cmd.Output()
-		if err != nil {
-			fmt.Println(err.Error())
-		}
-		fmt.Println(string(buf))
-		// ch <- watcher.parseContent()
 	} else {
 		log.Printf("Waiting for post \"%s\"...\n", watcher.name)
 	}

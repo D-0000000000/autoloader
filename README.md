@@ -14,7 +14,10 @@ First get source code
 $ git clone https://github.com/D-0000000000/autoloader.git
 ```
 
-Specific message sender in `weibo.go` and `akanno.go`
+Specific QQ message sender for function `consume` in `autoloader.go`.
+If you want to use a new QQ message sender, you can rewrite function `consume`. 
+
+Then build autoloader.
 
 ```bash
 $ cd autoloader
@@ -29,11 +32,11 @@ $ autoloader
 
 Once autoloader get new message, message will send to QQ by message sender
 
-## Some Infomation
+## Extra Infomation
 
 Actually I don't know anything about golang. I just modified a project from [hguandl](https://github.com/hguandl/) I don't know if there is any problem. But it did work. If there is any problems on code I'm out.
 
-Watch list please refer to `config.yaml`.
+Watch list refer to `config.yaml`.
 
 ## Credit
 

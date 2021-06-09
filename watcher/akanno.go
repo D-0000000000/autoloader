@@ -4,12 +4,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"os"
-	"os/exec"
+	"math/rand"
 	"strings"
 
 	"github.com/D-0000000000/autoloader/v2/common"
 	"github.com/gocolly/colly/v2"
+
+	bolt "go.etcd.io/bbolt"
 )
 
 const iOSClientUA = "arknights/385" +
@@ -18,31 +19,42 @@ const iOSClientUA = "arknights/385" +
 
 type akAnnounceWatcher struct {
 	name       string
-	focusID    string
 	latestAnno announce
-	existedID  []string
 	debugURL   string
+	db         *bolt.DB
 }
 
 // NewAkAnnounceWatcher creates a Watcher of Arknights game annoucements.
-func NewAkAnnounceWatcher(debugURL string) (Watcher, error) {
+func NewAkAnnounceWatcher(dbPath string, debugURL string) (Watcher, error) {
+	var err error = nil
+
 	watcher := new(akAnnounceWatcher)
 	watcher.name = "明日方舟客户端公告"
 	watcher.debugURL = debugURL
-	err := watcher.setup()
+
+	watcher.db, err = bolt.Open(dbPath, 0666, nil)
+	if err != nil {
+		return watcher, err
+	}
+
+	err = watcher.setup()
 	return watcher, err
 }
 
+func (watcher akAnnounceWatcher) apiURL() string {
+	if watcher.debugURL != "" {
+		return watcher.debugURL
+	}
+	clientID := rand.Intn(114514191) + 11451419
+	return fmt.Sprintf("%s?sign=%d",
+		"https://ak-fs.hypergryph.com/announce/IOS/announcement.meta.json",
+		clientID,
+	)
+}
+
 func (watcher akAnnounceWatcher) fetchAPI() (announceMeta, error) {
-	var apiURL string
 	var err error = nil
 	var data announceMeta
-
-	if watcher.debugURL != "" {
-		apiURL = watcher.debugURL
-	} else {
-		apiURL = "https://ak-fs.hypergryph.com/announce/IOS/announcement.meta.json?sign=1145141919"
-	}
 
 	c := colly.NewCollector(
 		colly.UserAgent(iOSClientUA),
@@ -56,7 +68,7 @@ func (watcher akAnnounceWatcher) fetchAPI() (announceMeta, error) {
 		err = json.Unmarshal(r.Body, &data)
 	})
 
-	c.Visit(apiURL)
+	c.Visit(watcher.apiURL())
 	c.Wait()
 
 	return data, err
@@ -68,19 +80,21 @@ func (watcher *akAnnounceWatcher) setup() error {
 		return err
 	}
 
-	watcher.focusID = data.FocusAnnounceID
-	watcher.existedID = flushIDList(data.AnnounceList)
+	watcher.storeAnnos(data.AnnounceList)
 
 	return nil
 }
 
-func flushIDList(announceList []announce) []string {
-	ret := make([]string, len(announceList))
-	for i, anno := range announceList {
-		ret[i] = anno.AnnounceID
-	}
+func (watcher *akAnnounceWatcher) storeAnnos(announceList []announce) error {
+	err := watcher.db.Update(func(tx *bolt.Tx) error {
+		b, err := tx.CreateBucketIfNotExists([]byte("AkAnno"))
+		for _, anno := range announceList {
+			err = b.Put([]byte(anno.AnnounceID), []byte(anno.Title))
+		}
+		return err
+	})
 
-	return ret
+	return err
 }
 
 func (watcher *akAnnounceWatcher) update() bool {
@@ -90,43 +104,29 @@ func (watcher *akAnnounceWatcher) update() bool {
 		return false
 	}
 
-	if watcher.focusID != data.FocusAnnounceID {
-		watcher.focusID = data.FocusAnnounceID
-		existed := false
+	ret := false
+	err = watcher.db.Update(func(tx *bolt.Tx) error {
+		b, err := tx.CreateBucketIfNotExists([]byte("AkAnno"))
 		for _, anno := range data.AnnounceList {
-			if anno.AnnounceID == data.FocusAnnounceID {
-				existed = true
+			v := b.Get([]byte(anno.AnnounceID))
+			if v == nil {
+				if strings.Contains(anno.Title, "制作组通讯") {
+					watcher.latestAnno = anno
+					ret = true
+				}
+				err = b.Put([]byte(anno.AnnounceID), []byte(anno.Title))
 				break
 			}
 		}
-		if existed == false {
-			watcher.latestAnno = announce{
-				Title:  "出现公告弹窗，可能会有新饼",
-				WebURL: "https://ak.hypergryph.com/news.html",
-			}
-			return true
-		}
+		return err
+	})
+
+	if err != nil {
+		log.Println(err)
+		return false
 	}
 
-	for _, anno := range data.AnnounceList {
-		newID := anno.AnnounceID
-		existed := false
-		for _, oldID := range watcher.existedID {
-			if newID == oldID {
-				existed = true
-				break
-			}
-		}
-		if existed == false {
-			watcher.existedID = flushIDList(data.AnnounceList)
-			if strings.Contains(anno.Title, "制作组通讯") {
-				watcher.latestAnno = anno
-				return true
-			}
-		}
-	}
-
-	return false
+	return ret
 }
 
 func (watcher akAnnounceWatcher) parseContent() common.NotifyPayload {
@@ -142,38 +142,7 @@ func (watcher akAnnounceWatcher) parseContent() common.NotifyPayload {
 func (watcher *akAnnounceWatcher) Produce(ch chan common.NotifyPayload) {
 	if watcher.update() {
 		log.Printf("New post from \"%s\"...\n", watcher.name)
-		msg := watcher.parseContent()
-		msgfile, err := os.Create("msgTitle.txt")
-		if err != nil {
-			panic(err)
-		}
-		msgfile.WriteString(msg.Title + "\n")
-		msgfile.Close()
-		msgfile, err = os.Create("msgBody.txt")
-		if err != nil {
-			panic(err)
-		}
-		msgfile.WriteString(msg.Body + "\n")
-		msgfile.Close()
-		msgfile, err = os.Create("msgURL.txt")
-		if err != nil {
-			panic(err)
-		}
-		msgfile.WriteString(msg.URL + "\n")
-		msgfile.Close()
-		msgfile, err = os.Create("msgPicURL.txt")
-		if err != nil {
-			panic(err)
-		}
-		msgfile.WriteString(msg.PicURL + "\n")
-		msgfile.Close()
-		cmd := exec.Command("./qqmessagesender")
-		buf, err := cmd.Output()
-		if err != nil {
-			fmt.Println(err.Error())
-		}
-		fmt.Println(string(buf))
-		// ch <- watcher.parseContent()
+		ch <- watcher.parseContent()
 	} else {
 		log.Printf("Waiting for post \"%s\"...\n", watcher.name)
 	}

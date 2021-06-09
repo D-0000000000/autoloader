@@ -3,6 +3,7 @@ package watcher
 import (
 	"errors"
 	"fmt"
+	"path"
 
 	"github.com/D-0000000000/autoloader/v2/common"
 	"github.com/mitchellh/mapstructure"
@@ -15,11 +16,17 @@ type Watcher interface {
 
 type weiboConfig struct {
 	UID      int64
+	Sub      string
+	Subp     string
 	DebugURL string `mapstructure:"debug_url"`
 }
 
 type akAnnoConfig struct {
 	Channel  string
+	DebugURL string `mapstructure:"debug_url"`
+}
+
+type sirenConfig struct {
 	DebugURL string `mapstructure:"debug_url"`
 }
 
@@ -36,31 +43,42 @@ func wrapDebug(debugURL string, debugMode bool) string {
 }
 
 // ParseWatchers decodes the config returns a list of Watchers.
-func ParseWatchers(configs []map[string]interface{}, debugMode bool) ([]Watcher, error) {
+func ParseWatchers(configs []map[string]interface{}, dataPath string, debugMode bool) ([]Watcher, error) {
 	var err error = nil
 	ret := make([]Watcher, len(configs))
 
 	for idx, config := range configs {
 		watcherType, ok := config["type"].(string)
 		if !ok {
-			err = errors.New("Invalid watcher config")
+			err = errors.New("invalid watcher config")
 			break
 		}
 
 		switch watcherType {
 		case "weibo":
 			var wbConfig weiboConfig
-			err = mapstructure.Decode(config, &wbConfig)
-			ret[idx], err = NewWeiboWatcher(wbConfig.UID, wrapDebug(wbConfig.DebugURL, debugMode))
+			if err = mapstructure.Decode(config, &wbConfig); err != nil {
+				break
+			}
+			ret[idx], err = NewWeiboWatcher(wbConfig.UID, wbConfig.Sub, wbConfig.Subp, wrapDebug(wbConfig.DebugURL, debugMode))
 		case "akanno":
 			var akConfig akAnnoConfig
-			err = mapstructure.Decode(config, &akConfig)
-			if akConfig.Channel != "IOS" {
-				err = fmt.Errorf("Unsupported channel \"%v\"", akConfig.Channel)
+			if err = mapstructure.Decode(config, &akConfig); err != nil {
+				break
 			}
-			ret[idx], err = NewAkAnnounceWatcher(wrapDebug(akConfig.DebugURL, debugMode))
+			if akConfig.Channel != "IOS" {
+				err = fmt.Errorf("unsupported channel \"%v\"", akConfig.Channel)
+				break
+			}
+			ret[idx], err = NewAkAnnounceWatcher(path.Join(dataPath, "akanno.db"), wrapDebug(akConfig.DebugURL, debugMode))
+		case "siren":
+			var akConfig sirenConfig
+			if err = mapstructure.Decode(config, &akConfig); err != nil {
+				break
+			}
+			ret[idx], err = NewSirenWatcher(path.Join(dataPath, "siren.db"), wrapDebug(akConfig.DebugURL, debugMode))
 		default:
-			err = fmt.Errorf("Unknown watcher #%d with type \"%s\"", idx, watcherType)
+			err = fmt.Errorf("unknown watcher #%d with type \"%s\"", idx, watcherType)
 		}
 
 		if err != nil {
